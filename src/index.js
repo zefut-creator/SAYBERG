@@ -85,9 +85,6 @@ async function finishArenaDraft(api, user, draft) {
     prizes: draft.prizes,
     createdAt: Date.now(),
   };
-  game.players.set(user.id, {
-    id: user.id, name: game.creatorName, username: user.username || null, alive: true, present: false,
-  });
   games.set(chatId, game);
   creationDrafts.delete(String(user.id));
   await api.sendMessage(chatId, arenaCard(game), { reply_markup: lobbyKeyboard() });
@@ -144,6 +141,12 @@ function arenaCard(game) {
     `📣 Перекличка: ${game.attendance ? "включена" : "выключена"}`,
     "",
     `Участников: ${game.players.size}/${game.maxPlayers}`,
+    "",
+    "👥 Участники:",
+    game.players.size
+      ? [...game.players.values()].map((player) => player.username ? `@${player.username}` : player.name).join("\n")
+      : "Пока никого нет.",
+    "",
     "Нажимайте «Войти», чтобы участвовать.",
   ].join("\n");
 }
