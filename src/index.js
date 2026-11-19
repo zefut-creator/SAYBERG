@@ -49,7 +49,7 @@ function sprintRules() {
     "• В первом раунде выбывает 35% игроков, далее — 15%.",
     "• Раунды идут автоматически с небольшими паузами.",
     "• Побеждает последний оставшийся игрок.",
-  ].join("\\n");
+  ].join("\n");
 }
 
 function gameSummary(game) {
@@ -79,7 +79,6 @@ function arenaCard(game) {
     `🏆 Победителей: ${game.winners}`,
     `🎁 Призы: ${game.prizes}`,
     `👤 Создатель: ${game.creatorName}`,
-    `⏳ Старт через: ${formatDuration(game.startMinutes)}`,
     "",
     `Участников: ${game.players.size}/${game.maxPlayers}`,
     "Нажимайте «Войти», чтобы участвовать.",
@@ -108,7 +107,6 @@ async function promptNext(ctx, draft) {
     maxPlayers: "👥 Укажи максимальное количество игроков (от 2 до 100):",
     winners: "🏆 Сколько будет победителей? Укажи число:",
     prizes: "🎁 Напиши призы:",
-    startMinutes: "⏳ Через сколько минут начать арену? Напиши число минут (например, 5, 10 или 30):",
   };
   await ctx.reply(prompts[draft.step]);
 }
@@ -147,46 +145,19 @@ bot.on("message:text", async (ctx, next) => {
     draft.step = "prizes";
   } else if (draft.step === "prizes") {
     draft.prizes = value.slice(0, 300);
-    draft.step = "startMinutes";
-  } else if (draft.step === "startMinutes") {
-    const n = Number(value);
-    if (!Number.isInteger(n) || n < 1 || n > 10080) {
-      await ctx.reply("Укажи целое число минут от 1 до 10080 (7 дней).");
-      return;
-    }
-    draft.startMinutes = n;
-
     const game = {
-      chatId,
-      creatorId: draft.creatorId,
-      creatorName: draft.creatorName,
-      status: "lobby",
-      mode: "sprint",
-      round: 0,
-      players: new Map(),
-      settings: { ...DEFAULT_SETTINGS },
-      description: draft.description,
-      maxPlayers: draft.maxPlayers,
-      winners: draft.winners,
-      prizes: draft.prizes,
-      startMinutes: draft.startMinutes,
+      chatId, creatorId: draft.creatorId, creatorName: draft.creatorName,
+      status: "lobby", mode: "sprint", round: 0, players: new Map(),
+      settings: { ...DEFAULT_SETTINGS }, description: draft.description,
+      maxPlayers: draft.maxPlayers, winners: draft.winners, prizes: draft.prizes,
       createdAt: Date.now(),
     };
-    game.players.set(ctx.from.id, {
-      id: ctx.from.id,
-      name: draft.creatorName,
-      alive: true,
-    });
+    game.players.set(ctx.from.id, { id: ctx.from.id, name: draft.creatorName, alive: true });
     games.set(chatId, game);
     creationDrafts.delete(chatId);
-
     await ctx.reply(arenaCard(game), { reply_markup: lobbyKeyboard() });
     await ctx.reply("Управление ареной:", { reply_markup: arenaControlsKeyboard() });
-    game.startTimer = setTimeout(() => {
-      publishArena(bot.api, chatId).catch((err) => console.error("Arena start error:", err));
-    }, n * 60 * 1000);
     return;
-  }
 
   await promptNext(ctx, draft);
 });
@@ -204,7 +175,7 @@ bot.command("help", async (ctx) => {
     "Команды SayBerg:\n" +
     "/game — создать арену в этой группе\n" +
     "/join — присоединиться\n" +
-    "/startgame — начать раньше таймера (создатель)\n" +
+    "/startgame — начать игру (создатель)\n" +
     "/status — состояние арены\n" +
     "/stopgame — остановить арену\n" +
     "/cancel — отменить создание арены"
@@ -310,7 +281,7 @@ bot.command("startgame", async (ctx) => {
   const chatId = String(ctx.chat.id);
   const game = getGame(chatId);
   if (!game || game.status !== "lobby") return ctx.reply("Нет ожидающей арены.");
-  if (ctx.from.id !== game.creatorId) return ctx.reply("Начать раньше таймера может только создатель.");
+  if (ctx.from.id !== game.creatorId) return ctx.reply("Начать игру может только создатель.");
   await publishArena(ctx.api, chatId);
 });
 
