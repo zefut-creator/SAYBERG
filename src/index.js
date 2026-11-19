@@ -87,7 +87,8 @@ async function finishArenaDraft(api, user, draft) {
   };
   games.set(chatId, game);
   creationDrafts.delete(String(user.id));
-  await api.sendMessage(chatId, arenaCard(game), { reply_markup: lobbyKeyboard() });
+  const arenaMessage = await api.sendMessage(chatId, arenaCard(game), { reply_markup: lobbyKeyboard() });
+  game.arenaMessageId = arenaMessage.message_id;
   await api.sendMessage(chatId, "Управление ареной:", { reply_markup: arenaControlsKeyboard() });
   await api.sendMessage(user.id, `✅ Арена создана в группе «${escapeHtml(registeredGroups.get(chatId)?.title || "группа")}».`);
 }
@@ -127,6 +128,13 @@ function formatDuration(minutes) {
   const hours = Math.floor(minutes / 60);
   const rest = minutes % 60;
   return rest ? `${hours} ч. ${rest} мин.` : `${hours} ч.`;
+}
+
+async function updateArenaCard(api, game) {
+  if (!game.arenaMessageId) return;
+  await api.editMessageText(game.chatId, game.arenaMessageId, arenaCard(game), {
+    reply_markup: lobbyKeyboard(),
+  }).catch((err) => console.error("Arena card update error:", err));
 }
 
 function arenaCard(game) {
@@ -343,7 +351,7 @@ async function joinGame(ctx) {
   const name = [user.first_name, user.last_name].filter(Boolean).join(" ") || user.username || "Игрок";
   game.players.set(user.id, { id: user.id, name, username: user.username || null, alive: true, present: false });
   await ctx.answerCallbackQuery({ text: "Ты в арене!" });
-  await ctx.editMessageText(arenaCard(game), { reply_markup: lobbyKeyboard() }).catch(() => {});
+  await updateArenaCard(ctx.api, game);
 }
 
 bot.callbackQuery("sayberg:join", joinGame);
@@ -378,6 +386,7 @@ bot.command("join", async (ctx) => {
   if (game.players.size >= game.maxPlayers) return ctx.reply("Мест больше нет.");
   const name = [user.first_name, user.last_name].filter(Boolean).join(" ") || user.username || "Игрок";
   game.players.set(user.id, { id: user.id, name, username: user.username || null, alive: true, present: false });
+  await updateArenaCard(ctx.api, game);
   await ctx.reply(`➕ ${name} присоединился. Игроков: ${game.players.size}/${game.maxPlayers}`);
 });
 
@@ -395,6 +404,8 @@ async function startSprint(api, chatId) {
   await api.sendMessage(chatId,
     `⚡ СПРИНТ — НАЧАЛО\n\nУчастников (${game.players.size}/${game.maxPlayers})`);
   if (game.attendance) {
+    await new Promise((resolve) => setTimeout(resolve, 5000));
+    if (game.status !== "running") return;
     game.status = "attendance";
     await api.sendMessage(chatId, "📣 ПЕРЕКЛИЧКА! У вас есть 30 секунд, чтобы подтвердить участие:", {
       reply_markup: attendanceKeyboard(),
@@ -426,7 +437,7 @@ async function finishAttendance(api, chatId) {
   absent.forEach((player) => { player.alive = false; });
   await api.sendMessage(chatId, absent.length
     ? `📣 Перекличка завершена.\n❌ Не отметились и выбыли: ${absent.map(playerMention).join(", ")}`
-    : "📣 Перекличка завершена. Все участники на месте!");
+    : "📣 Перекличка завершена. Никто не пропустил перекличку — все на месте!");
   if (alivePlayers(game).length <= 1) return finishSprint(api, chatId);
   setTimeout(() => runSprintRound(api, chatId).catch((err) => console.error("Sprint round error:", err)), 20000);
 }
