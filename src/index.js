@@ -282,7 +282,7 @@ bot.callbackQuery(/^sayberg:select:(-?\d+)$/, async (ctx) => {
     return ctx.answerCallbackQuery({ text: "В этой группе уже идёт арена.", show_alert: true });
   }
   const member = await ctx.api.getChatMember(chatId, ctx.from.id).catch(() => null);
-  if (!member || ["left", "kicked"].includes(member.status)) {
+  if (member && ["left", "kicked"].includes(member.status)) {
     return ctx.answerCallbackQuery({ text: "Ты должен состоять в этой группе, чтобы создать там арену.", show_alert: true });
   }
   const draft = { creatorId: ctx.from.id, targetChatId: chatId, step: "description" };
