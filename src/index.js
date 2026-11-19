@@ -328,6 +328,20 @@ bot.command("status", async (ctx) => {
   await ctx.reply(game.status === "lobby" ? arenaCard(game) : gameSummary(game));
 });
 
+bot.command("endgame", async (ctx) => {
+  const chatId = String(ctx.chat.id);
+  const game = getGame(chatId);
+  if (!game || game.status === "finished" || game.status === "stopped") {
+    return ctx.reply("Активной игры нет.");
+  }
+  if (ctx.from.id !== game.creatorId) {
+    return ctx.reply("Завершить игру командой /endgame может только её создатель.");
+  }
+  if (game.startTimer) clearTimeout(game.startTimer);
+  game.status = "finished";
+  await ctx.reply("🏁 Создатель завершил игру. Игра окончена.");
+});
+
 bot.command("stopgame", async (ctx) => {
   const chatId = String(ctx.chat.id);
   const game = getGame(chatId);
