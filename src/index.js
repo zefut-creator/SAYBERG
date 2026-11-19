@@ -34,6 +34,24 @@ function lobbyKeyboard() {
   return new InlineKeyboard().text("➕ Войти", "sayberg:join");
 }
 
+function arenaControlsKeyboard() {
+  return new InlineKeyboard()
+    .text("📖 Правила", "sayberg:rules")
+    .text("🚀 Начало", "sayberg:start");
+}
+
+function sprintRules() {
+  return [
+    "📖 ПРАВИЛА — ⚡ СПРИНТ",
+    "",
+    "• Все участники играют без ролей и ходов.",
+    "• В каждом раунде бот случайно выбирает игроков, которые выбывают.",
+    "• В первом раунде выбывает 35% игроков, далее — 15%.",
+    "• Раунды идут автоматически с небольшими паузами.",
+    "• Побеждает последний оставшийся игрок.",
+  ].join("\\n");
+}
+
 function gameSummary(game) {
   return [
     "⚡ SAYBERG — СПРИНТ",
@@ -80,7 +98,7 @@ async function publishArena(api, chatId) {
     return;
   }
 
-  await api.sendMessage(chatId, "🚀 Время вышло! Арена начинается. Режим: ⚡ СПРИНТ.");
+  await api.sendMessage(chatId, "🚀 Арена начинается! Режим: ⚡ СПРИНТ.");
   await runSprintRound(api, chatId);
 }
 
@@ -163,6 +181,7 @@ bot.on("message:text", async (ctx, next) => {
     creationDrafts.delete(chatId);
 
     await ctx.reply(arenaCard(game), { reply_markup: lobbyKeyboard() });
+    await ctx.reply("Управление ареной:", { reply_markup: arenaControlsKeyboard() });
     game.startTimer = setTimeout(() => {
       publishArena(bot.api, chatId).catch((err) => console.error("Arena start error:", err));
     }, n * 60 * 1000);
@@ -254,6 +273,27 @@ async function joinGame(ctx) {
 
 bot.callbackQuery("sayberg:join", joinGame);
 
+bot.callbackQuery("sayberg:rules", async (ctx) => {
+  await ctx.answerCallbackQuery();
+  await ctx.reply(sprintRules());
+});
+
+bot.callbackQuery("sayberg:start", async (ctx) => {
+  const chatId = String(ctx.chat.id);
+  const game = getGame(chatId);
+  if (!game || game.status !== "lobby") {
+    return ctx.answerCallbackQuery({ text: "Арена уже началась или закрыта." });
+  }
+  if (ctx.from.id !== game.creatorId) {
+    return ctx.answerCallbackQuery({ text: "Запустить арену может только создатель.", show_alert: true });
+  }
+  if (game.players.size < 2) {
+    return ctx.answerCallbackQuery({ text: "Нужно минимум 2 игрока.", show_alert: true });
+  }
+  await ctx.answerCallbackQuery({ text: "Запускаю арену!" });
+  await publishArena(ctx.api, chatId);
+});
+
 bot.command("join", async (ctx) => {
   const chatId = String(ctx.chat.id);
   const game = getGame(chatId);
@@ -271,7 +311,6 @@ bot.command("startgame", async (ctx) => {
   const game = getGame(chatId);
   if (!game || game.status !== "lobby") return ctx.reply("Нет ожидающей арены.");
   if (ctx.from.id !== game.creatorId) return ctx.reply("Начать раньше таймера может только создатель.");
-  await ctx.reply("🚀 Создатель запустил арену раньше таймера!");
   await publishArena(ctx.api, chatId);
 });
 
