@@ -169,7 +169,7 @@ async function promptNext(ctx, draft) {
     winners: "🏆 Сколько будет победителей? Укажи число:",
     prizes: "🎁 Напиши призы:",
   };
-  await ctx.reply(prompts[draft.step]);
+  if (prompts[draft.step]) await ctx.reply(prompts[draft.step]);
 }
 
 bot.on("message:text", async (ctx, next) => {
@@ -177,6 +177,11 @@ bot.on("message:text", async (ctx, next) => {
   const draft = creationDrafts.get(draftKey);
   if (!draft || ctx.from.id !== draft.creatorId || ctx.message.text.startsWith("/")) {
     return next();
+  }
+
+  if (draft.step === "attendance") {
+    await ctx.reply("Выбери перекличку кнопкой выше.");
+    return;
   }
 
   const value = ctx.message.text.trim();
