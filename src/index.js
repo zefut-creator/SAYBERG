@@ -9,10 +9,8 @@ if (!token) {
 }
 
 const bot = new Bot(token);
-
-// Each Telegram group gets its own independent game session.
-// This first version stores sessions in memory; persistence will be added before production.
 const games = new Map();
+const creationDrafts = new Map();
 
 const DEFAULT_SETTINGS = { firstElimination: 35, nextElimination: 15 };
 
@@ -27,147 +25,254 @@ function alivePlayers(game) {
 function playersText(game) {
   const players = [...game.players.values()];
   if (!players.length) return "Пока никто не присоединился.";
-  return players
-    .map((p, i) => `${i + 1}. ${p.name} — ${p.alive ? "🟢 в игре" : "❌ выбыл"}`)
-    .join("\n");
+  return players.map((p, i) =>
+    \`\${i + 1}. \${p.name} — \${p.alive ? "🟢 в игре" : "❌ выбыл"}\`
+  ).join("\\n");
 }
 
 function lobbyKeyboard() {
-  return new InlineKeyboard()
-    .text("➕ Войти", "sayberg:join")
-    .text("🚀 Начать", "sayberg:start");
+  return new InlineKeyboard().text("➕ Войти", "sayberg:join");
 }
 
 function gameSummary(game) {
   return [
-    "⚡ **SAYBERG — СПРИНТ**",
+    "⚡ SAYBERG — СПРИНТ",
     "",
-    `Раунд: ${game.round}`,
-    `Игроков в игре: ${alivePlayers(game).length}/${game.players.size}`,
+    \`Раунд: \${game.round}\`,
+    \`Игроков в игре: \${alivePlayers(game).length}/\${game.players.size}\`,
     "",
     playersText(game),
-  ].join("\n");
+  ].join("\\n");
 }
+
+function formatDuration(minutes) {
+  if (minutes < 60) return \`\${minutes} мин.\`;
+  const hours = Math.floor(minutes / 60);
+  const rest = minutes % 60;
+  return rest ? \`\${hours} ч. \${rest} мин.\` : \`\${hours} ч.\`;
+}
+
+function arenaCard(game) {
+  return [
+    "⚡ SAYBERG — НОВАЯ АРЕНА",
+    "",
+    \`📝 Описание: \${game.description}\`,
+    \`👥 Максимум игроков: \${game.maxPlayers}\`,
+    \`🏆 Победителей: \${game.winners}\`,
+    \`🎁 Призы: \${game.prizes}\`,
+    \`👤 Создатель: \${game.creatorName}\`,
+    \`⏳ Старт через: \${formatDuration(game.startMinutes)}\`,
+    "",
+    \`Участников: \${game.players.size}/\${game.maxPlayers}\`,
+    "Нажимайте «Войти», чтобы участвовать.",
+  ].join("\\n");
+}
+
+async function publishArena(api, chatId) {
+  const game = getGame(chatId);
+  if (!game || game.status !== "lobby") return;
+  game.status = "running";
+  if (game.startTimer) clearTimeout(game.startTimer);
+
+  if (game.players.size < 2) {
+    game.status = "finished";
+    await api.sendMessage(chatId, "⏹ Арена закрыта: для начала нужно минимум 2 игрока.");
+    return;
+  }
+
+  await api.sendMessage(chatId, "🚀 Время вышло! Арена начинается. Режим: ⚡ СПРИНТ.");
+  await runSprintRound(api, chatId);
+}
+
+async function promptNext(ctx, draft) {
+  const prompts = {
+    description: "📝 Отправь описание арены:",
+    maxPlayers: "👥 Укажи максимальное количество игроков (от 2 до 100):",
+    winners: "🏆 Сколько будет победителей? Укажи число:",
+    prizes: "🎁 Напиши призы:",
+    startMinutes: "⏳ Через сколько минут начать арену? Напиши число минут (например, 5, 10 или 30):",
+  };
+  await ctx.reply(prompts[draft.step]);
+}
+
+bot.on("message:text", async (ctx, next) => {
+  const chatId = String(ctx.chat.id);
+  const draft = creationDrafts.get(chatId);
+  if (!draft || ctx.from.id !== draft.creatorId || ctx.message.text.startsWith("/")) {
+    return next();
+  }
+
+  const value = ctx.message.text.trim();
+  if (!value) {
+    await ctx.reply("Пустое значение не подходит. Попробуй ещё раз.");
+    return;
+  }
+
+  if (draft.step === "description") {
+    draft.description = value.slice(0, 500);
+    draft.step = "maxPlayers";
+  } else if (draft.step === "maxPlayers") {
+    const n = Number(value);
+    if (!Number.isInteger(n) || n < 2 || n > 100) {
+      await ctx.reply("Нужно целое число от 2 до 100.");
+      return;
+    }
+    draft.maxPlayers = n;
+    draft.step = "winners";
+  } else if (draft.step === "winners") {
+    const n = Number(value);
+    if (!Number.isInteger(n) || n < 1 || n > draft.maxPlayers) {
+      await ctx.reply(\`Укажи число от 1 до \${draft.maxPlayers}.\`);
+      return;
+    }
+    draft.winners = n;
+    draft.step = "prizes";
+  } else if (draft.step === "prizes") {
+    draft.prizes = value.slice(0, 300);
+    draft.step = "startMinutes";
+  } else if (draft.step === "startMinutes") {
+    const n = Number(value);
+    if (!Number.isInteger(n) || n < 1 || n > 10080) {
+      await ctx.reply("Укажи целое число минут от 1 до 10080 (7 дней).");
+      return;
+    }
+    draft.startMinutes = n;
+
+    const game = {
+      chatId,
+      creatorId: draft.creatorId,
+      creatorName: draft.creatorName,
+      status: "lobby",
+      mode: "sprint",
+      round: 0,
+      players: new Map(),
+      settings: { ...DEFAULT_SETTINGS },
+      description: draft.description,
+      maxPlayers: draft.maxPlayers,
+      winners: draft.winners,
+      prizes: draft.prizes,
+      startMinutes: draft.startMinutes,
+      createdAt: Date.now(),
+    };
+    game.players.set(ctx.from.id, {
+      id: ctx.from.id,
+      name: draft.creatorName,
+      alive: true,
+    });
+    games.set(chatId, game);
+    creationDrafts.delete(chatId);
+
+    await ctx.reply(arenaCard(game), { reply_markup: lobbyKeyboard() });
+    game.startTimer = setTimeout(() => {
+      publishArena(bot.api, chatId).catch((err) => console.error("Arena start error:", err));
+    }, n * 60 * 1000);
+    return;
+  }
+
+  await promptNext(ctx, draft);
+});
 
 bot.command("start", async (ctx) => {
   await ctx.reply(
-    "⚡ Привет! Я SayBerg — игровой бот для групп.\n\n" +
-    "Добавь меня в группу и напиши /game, чтобы создать игру.\n" +
+    "⚡ Привет! Я SayBerg — игровой бот для групп.\\n\\n" +
+    "Добавь меня в группу и напиши /game, чтобы создать арену.\\n" +
     "Первый доступный режим: ⚡ СПРИНТ."
   );
 });
 
 bot.command("help", async (ctx) => {
   await ctx.reply(
-    "Команды SayBerg:\n" +
-    "/game — создать игру в этой группе\n" +
-    "/join — присоединиться\n" +
-    "/startgame — начать игру (создатель)\n" +
-    "/status — показать состояние игры\n" +
-    "/stopgame — остановить игру (создатель или администратор)"
+    "Команды SayBerg:\\n" +
+    "/game — создать арену в этой группе\\n" +
+    "/join — присоединиться\\n" +
+    "/startgame — начать раньше таймера (создатель)\\n" +
+    "/status — состояние арены\\n" +
+    "/stopgame — остановить арену\\n" +
+    "/cancel — отменить создание арены"
   );
 });
 
 bot.command("game", async (ctx) => {
   if (!ctx.chat || ctx.chat.type === "private") {
-    return ctx.reply("Создавать игры можно в группах. Добавь меня в нужную группу.");
+    return ctx.reply("Создавать арены можно в группах. Добавь меня в нужную группу.");
   }
 
   const chatId = String(ctx.chat.id);
   const existing = getGame(chatId);
   if (existing && existing.status !== "finished" && existing.status !== "stopped") {
-    return ctx.reply("В этой группе уже есть активная игра. Напиши /status.");
+    return ctx.reply("В этой группе уже есть активная арена. Напиши /status.");
+  }
+  if (creationDrafts.has(chatId)) {
+    return ctx.reply("Создание арены уже начато. Продолжай отвечать на вопросы или напиши /cancel.");
   }
 
   const creator = ctx.from;
-  const game = {
-    chatId,
+  const draft = {
     creatorId: creator.id,
-    creatorName: creator.first_name || "Создатель",
-    status: "lobby",
-    mode: "sprint",
-    round: 0,
-    players: new Map(),
-    settings: { ...DEFAULT_SETTINGS },
-    createdAt: Date.now(),
+    creatorName: [creator.first_name, creator.last_name].filter(Boolean).join(" ") || creator.username || "Создатель",
+    step: "description",
   };
+  creationDrafts.set(chatId, draft);
+  await ctx.reply("⚡ Создание новой арены.\\n\\nНапиши /cancel, если передумал.");
+  await promptNext(ctx, draft);
+});
 
-  game.players.set(creator.id, {
-    id: creator.id,
-    name: creator.first_name || "Игрок",
-    alive: true,
-  });
-  games.set(chatId, game);
-
-  await ctx.reply(
-    "⚡ **SayBerg — СПРИНТ**\n\n" +
-    "Создана игровая комната! Нажимайте «Войти», чтобы присоединиться.\n" +
-    `Создатель: ${game.creatorName}\n` +
-    "Выбывание: 35% в первом раунде, затем 15%.\n\n" +
-    "Когда все готовы, создатель нажимает «Начать».",
-    { parse_mode: "Markdown", reply_markup: lobbyKeyboard() }
-  );
+bot.command("cancel", async (ctx) => {
+  const chatId = String(ctx.chat.id);
+  const draft = creationDrafts.get(chatId);
+  if (draft && draft.creatorId === ctx.from.id) {
+    creationDrafts.delete(chatId);
+    return ctx.reply("Создание арены отменено.");
+  }
+  const game = getGame(chatId);
+  if (game && game.status === "lobby" && game.creatorId === ctx.from.id) {
+    if (game.startTimer) clearTimeout(game.startTimer);
+    game.status = "stopped";
+    return ctx.reply("Арена отменена создателем.");
+  }
+  await ctx.reply("Нет твоего создания или ожидающей арены для отмены.");
 });
 
 async function joinGame(ctx) {
   const chatId = String(ctx.chat.id);
   const game = getGame(chatId);
   if (!game || game.status !== "lobby") {
-    return ctx.answerCallbackQuery({ text: "Сейчас нет комнаты для входа." });
+    return ctx.answerCallbackQuery({ text: "Сейчас нет открытой арены." });
   }
-
   const user = ctx.from;
+  if (game.players.has(user.id)) {
+    return ctx.answerCallbackQuery({ text: "Ты уже участвуешь." });
+  }
+  if (game.players.size >= game.maxPlayers) {
+    return ctx.answerCallbackQuery({ text: "Мест больше нет." });
+  }
   const name = [user.first_name, user.last_name].filter(Boolean).join(" ") || user.username || "Игрок";
   game.players.set(user.id, { id: user.id, name, alive: true });
-  await ctx.answerCallbackQuery({ text: "Ты в игре!" });
-  await ctx.editMessageText(
-    "⚡ **SayBerg — СПРИНТ**\n\n" +
-    "Комната открыта для игроков.\n" +
-    `Участников: ${game.players.size}\n\n` +
-    playersText(game) +
-    "\n\nСоздатель может начинать игру.",
-    { parse_mode: "Markdown", reply_markup: lobbyKeyboard() }
-  ).catch(() => {});
-}
-
-async function startGame(ctx) {
-  const chatId = String(ctx.chat.id);
-  const game = getGame(chatId);
-  if (!game || game.status !== "lobby") {
-    return ctx.answerCallbackQuery({ text: "Нет ожидающей игры." });
-  }
-  if (ctx.from.id !== game.creatorId) {
-    return ctx.answerCallbackQuery({ text: "Начать игру может только создатель." });
-  }
-  if (game.players.size < 2) {
-    return ctx.answerCallbackQuery({ text: "Нужно минимум 2 игрока." });
-  }
-
-  game.status = "running";
-  await ctx.answerCallbackQuery({ text: "Игра началась!" });
-  await runSprintRound(ctx.api, chatId);
+  await ctx.answerCallbackQuery({ text: "Ты в арене!" });
+  await ctx.editMessageText(arenaCard(game), { reply_markup: lobbyKeyboard() }).catch(() => {});
 }
 
 bot.callbackQuery("sayberg:join", joinGame);
-bot.callbackQuery("sayberg:start", startGame);
 
 bot.command("join", async (ctx) => {
-  const game = getGame(ctx.chat.id);
-  if (!game || game.status !== "lobby") return ctx.reply("Сейчас нет комнаты для входа. Напиши /game.");
+  const chatId = String(ctx.chat.id);
+  const game = getGame(chatId);
+  if (!game || game.status !== "lobby") return ctx.reply("Сейчас нет открытой арены. Напиши /game.");
   const user = ctx.from;
+  if (game.players.has(user.id)) return ctx.reply("Ты уже участвуешь.");
+  if (game.players.size >= game.maxPlayers) return ctx.reply("Мест больше нет.");
   const name = [user.first_name, user.last_name].filter(Boolean).join(" ") || user.username || "Игрок";
   game.players.set(user.id, { id: user.id, name, alive: true });
-  await ctx.reply(`➕ ${name} присоединился. Игроков: ${game.players.size}`);
+  await ctx.reply(\`➕ \${name} присоединился. Игроков: \${game.players.size}/\${game.maxPlayers}\`);
 });
 
 bot.command("startgame", async (ctx) => {
-  const game = getGame(ctx.chat.id);
-  if (!game || game.status !== "lobby") return ctx.reply("Нет комнаты, которую можно начать.");
-  if (ctx.from.id !== game.creatorId) return ctx.reply("Начать игру может только её создатель.");
-  if (game.players.size < 2) return ctx.reply("Нужно минимум 2 игрока.");
-  game.status = "running";
-  await ctx.reply("🚀 СПРИНТ начинается!");
-  await runSprintRound(ctx.api, String(ctx.chat.id));
+  const chatId = String(ctx.chat.id);
+  const game = getGame(chatId);
+  if (!game || game.status !== "lobby") return ctx.reply("Нет ожидающей арены.");
+  if (ctx.from.id !== game.creatorId) return ctx.reply("Начать раньше таймера может только создатель.");
+  await ctx.reply("🚀 Создатель запустил арену раньше таймера!");
+  await publishArena(ctx.api, chatId);
 });
 
 async function runSprintRound(api, chatId) {
@@ -179,70 +284,68 @@ async function runSprintRound(api, chatId) {
     game.status = "finished";
     const winner = alive[0];
     await api.sendMessage(chatId, winner
-      ? `🏆 **${winner.name}** победил в SayBerg — СПРИНТ!`
-      : "Раунд завершён. Победителей нет.", { parse_mode: "Markdown" });
+      ? \`🏆 \${winner.name} победил в SayBerg — СПРИНТ!\`
+      : "Раунд завершён. Победителей нет.");
     return;
   }
 
   game.round += 1;
-  const percent = game.round === 1
-    ? game.settings.firstElimination
-    : game.settings.nextElimination;
+  const percent = game.round === 1 ? game.settings.firstElimination : game.settings.nextElimination;
   const eliminationCount = Math.min(alive.length - 1, Math.max(1, Math.floor(alive.length * percent / 100)));
-  const shuffled = [...alive].sort(() => Math.random() - 0.5);
+  const shuffled = [...alive];
+  for (let i = shuffled.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
+  }
   const eliminated = shuffled.slice(0, eliminationCount);
   eliminated.forEach((player) => { player.alive = false; });
 
-  const lines = [
-    `⚡ **СПРИНТ — раунд ${game.round}**`,
+  await api.sendMessage(chatId, [
+    \`⚡ СПРИНТ — раунд \${game.round}\`,
     "",
-    `🎲 Случайный отбор: ${percent}%`,
-    `❌ Выбыли: ${eliminated.map((p) => p.name).join(", ")}`,
-    `🟢 Осталось игроков: ${alivePlayers(game).length}`,
+    \`🎲 Случайный отбор: \${percent}%\`,
+    \`❌ Выбыли: \${eliminated.map((p) => p.name).join(", ")}\`,
+    \`🟢 Осталось игроков: \${alivePlayers(game).length}\`,
     "",
     playersText(game),
-  ];
-
-  await api.sendMessage(chatId, lines.join("\n"), { parse_mode: "Markdown" });
+  ].join("\\n"));
 
   if (alivePlayers(game).length <= 1) {
     const winner = alivePlayers(game)[0];
     game.status = "finished";
-    await api.sendMessage(chatId,
-      winner ? `🏆 **${winner.name}** — победитель SayBerg!` : "Игра завершена.",
-      { parse_mode: "Markdown" }
-    );
+    await api.sendMessage(chatId, winner
+      ? \`🏆 \${winner.name} — победитель SayBerg!\`
+      : "Игра завершена.");
     return;
   }
 
-  // Short pause keeps rounds readable in a busy group.
   setTimeout(() => runSprintRound(api, chatId).catch((err) => console.error("Sprint round error:", err)), 5000);
 }
 
 bot.command("status", async (ctx) => {
   const game = getGame(ctx.chat.id);
-  if (!game) return ctx.reply("В этой группе сейчас нет игры. Напиши /game.");
-  await ctx.reply(gameSummary(game), { parse_mode: "Markdown" });
+  if (!game) return ctx.reply("В этой группе сейчас нет арены. Напиши /game.");
+  await ctx.reply(game.status === "lobby" ? arenaCard(game) : gameSummary(game));
 });
 
 bot.command("stopgame", async (ctx) => {
-  const game = getGame(ctx.chat.id);
+  const chatId = String(ctx.chat.id);
+  const game = getGame(chatId);
   if (!game || game.status === "finished" || game.status === "stopped") {
-    return ctx.reply("Активной игры нет.");
+    return ctx.reply("Активной арены нет.");
   }
   const member = await ctx.getChatMember(ctx.from.id).catch(() => null);
   const isAdmin = member && ["administrator", "creator"].includes(member.status);
   if (ctx.from.id !== game.creatorId && !isAdmin) {
-    return ctx.reply("Остановить игру может создатель или администратор группы.");
+    return ctx.reply("Остановить арену может создатель или администратор группы.");
   }
+  if (game.startTimer) clearTimeout(game.startTimer);
   game.status = "stopped";
-  await ctx.reply("⏹ Игра остановлена.");
+  await ctx.reply("⏹ Арена остановлена.");
 });
 
-bot.catch((err) => {
-  console.error("Bot error:", err);
-});
+bot.catch((err) => console.error("Bot error:", err));
 
 bot.start({
-  onStart: (info) => console.log(`SayBerg started as @${info.username}`),
+  onStart: (info) => console.log(\`SayBerg started as @\${info.username}\`),
 });
