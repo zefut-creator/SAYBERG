@@ -26,8 +26,8 @@ function playersText(game) {
   const players = [...game.players.values()];
   if (!players.length) return "Пока никто не присоединился.";
   return players.map((p, i) =>
-    \`\${i + 1}. \${p.name} — \${p.alive ? "🟢 в игре" : "❌ выбыл"}\`
-  ).join("\\n");
+    `${i + 1}. ${p.name} — ${p.alive ? "🟢 в игре" : "❌ выбыл"}`
+  ).join("\n");
 }
 
 function lobbyKeyboard() {
@@ -38,34 +38,34 @@ function gameSummary(game) {
   return [
     "⚡ SAYBERG — СПРИНТ",
     "",
-    \`Раунд: \${game.round}\`,
-    \`Игроков в игре: \${alivePlayers(game).length}/\${game.players.size}\`,
+    `Раунд: ${game.round}`,
+    `Игроков в игре: ${alivePlayers(game).length}/${game.players.size}`,
     "",
     playersText(game),
-  ].join("\\n");
+  ].join("\n");
 }
 
 function formatDuration(minutes) {
-  if (minutes < 60) return \`\${minutes} мин.\`;
+  if (minutes < 60) return `${minutes} мин.`;
   const hours = Math.floor(minutes / 60);
   const rest = minutes % 60;
-  return rest ? \`\${hours} ч. \${rest} мин.\` : \`\${hours} ч.\`;
+  return rest ? `${hours} ч. ${rest} мин.` : `${hours} ч.`;
 }
 
 function arenaCard(game) {
   return [
     "⚡ SAYBERG — НОВАЯ АРЕНА",
     "",
-    \`📝 Описание: \${game.description}\`,
-    \`👥 Максимум игроков: \${game.maxPlayers}\`,
-    \`🏆 Победителей: \${game.winners}\`,
-    \`🎁 Призы: \${game.prizes}\`,
-    \`👤 Создатель: \${game.creatorName}\`,
-    \`⏳ Старт через: \${formatDuration(game.startMinutes)}\`,
+    `📝 Описание: ${game.description}`,
+    `👥 Максимум игроков: ${game.maxPlayers}`,
+    `🏆 Победителей: ${game.winners}`,
+    `🎁 Призы: ${game.prizes}`,
+    `👤 Создатель: ${game.creatorName}`,
+    `⏳ Старт через: ${formatDuration(game.startMinutes)}`,
     "",
-    \`Участников: \${game.players.size}/\${game.maxPlayers}\`,
+    `Участников: ${game.players.size}/${game.maxPlayers}`,
     "Нажимайте «Войти», чтобы участвовать.",
-  ].join("\\n");
+  ].join("\n");
 }
 
 async function publishArena(api, chatId) {
@@ -122,7 +122,7 @@ bot.on("message:text", async (ctx, next) => {
   } else if (draft.step === "winners") {
     const n = Number(value);
     if (!Number.isInteger(n) || n < 1 || n > draft.maxPlayers) {
-      await ctx.reply(\`Укажи число от 1 до \${draft.maxPlayers}.\`);
+      await ctx.reply(`Укажи число от 1 до ${draft.maxPlayers}.`);
       return;
     }
     draft.winners = n;
@@ -174,20 +174,20 @@ bot.on("message:text", async (ctx, next) => {
 
 bot.command("start", async (ctx) => {
   await ctx.reply(
-    "⚡ Привет! Я SayBerg — игровой бот для групп.\\n\\n" +
-    "Добавь меня в группу и напиши /game, чтобы создать арену.\\n" +
+    "⚡ Привет! Я SayBerg — игровой бот для групп.\n\n" +
+    "Добавь меня в группу и напиши /game, чтобы создать арену.\n" +
     "Первый доступный режим: ⚡ СПРИНТ."
   );
 });
 
 bot.command("help", async (ctx) => {
   await ctx.reply(
-    "Команды SayBerg:\\n" +
-    "/game — создать арену в этой группе\\n" +
-    "/join — присоединиться\\n" +
-    "/startgame — начать раньше таймера (создатель)\\n" +
-    "/status — состояние арены\\n" +
-    "/stopgame — остановить арену\\n" +
+    "Команды SayBerg:\n" +
+    "/game — создать арену в этой группе\n" +
+    "/join — присоединиться\n" +
+    "/startgame — начать раньше таймера (создатель)\n" +
+    "/status — состояние арены\n" +
+    "/stopgame — остановить арену\n" +
     "/cancel — отменить создание арены"
   );
 });
@@ -213,7 +213,7 @@ bot.command("game", async (ctx) => {
     step: "description",
   };
   creationDrafts.set(chatId, draft);
-  await ctx.reply("⚡ Создание новой арены.\\n\\nНапиши /cancel, если передумал.");
+  await ctx.reply("⚡ Создание новой арены.\n\nНапиши /cancel, если передумал.");
   await promptNext(ctx, draft);
 });
 
@@ -263,7 +263,7 @@ bot.command("join", async (ctx) => {
   if (game.players.size >= game.maxPlayers) return ctx.reply("Мест больше нет.");
   const name = [user.first_name, user.last_name].filter(Boolean).join(" ") || user.username || "Игрок";
   game.players.set(user.id, { id: user.id, name, alive: true });
-  await ctx.reply(\`➕ \${name} присоединился. Игроков: \${game.players.size}/\${game.maxPlayers}\`);
+  await ctx.reply(`➕ ${name} присоединился. Игроков: ${game.players.size}/${game.maxPlayers}`);
 });
 
 bot.command("startgame", async (ctx) => {
@@ -284,7 +284,7 @@ async function runSprintRound(api, chatId) {
     game.status = "finished";
     const winner = alive[0];
     await api.sendMessage(chatId, winner
-      ? \`🏆 \${winner.name} победил в SayBerg — СПРИНТ!\`
+      ? `🏆 ${winner.name} победил в SayBerg — СПРИНТ!`
       : "Раунд завершён. Победителей нет.");
     return;
   }
@@ -301,20 +301,20 @@ async function runSprintRound(api, chatId) {
   eliminated.forEach((player) => { player.alive = false; });
 
   await api.sendMessage(chatId, [
-    \`⚡ СПРИНТ — раунд \${game.round}\`,
+    `⚡ СПРИНТ — раунд ${game.round}`,
     "",
-    \`🎲 Случайный отбор: \${percent}%\`,
-    \`❌ Выбыли: \${eliminated.map((p) => p.name).join(", ")}\`,
-    \`🟢 Осталось игроков: \${alivePlayers(game).length}\`,
+    `🎲 Случайный отбор: ${percent}%`,
+    `❌ Выбыли: ${eliminated.map((p) => p.name).join(", ")}`,
+    `🟢 Осталось игроков: ${alivePlayers(game).length}`,
     "",
     playersText(game),
-  ].join("\\n"));
+  ].join("\n"));
 
   if (alivePlayers(game).length <= 1) {
     const winner = alivePlayers(game)[0];
     game.status = "finished";
     await api.sendMessage(chatId, winner
-      ? \`🏆 \${winner.name} — победитель SayBerg!\`
+      ? `🏆 ${winner.name} — победитель SayBerg!`
       : "Игра завершена.");
     return;
   }
@@ -361,5 +361,5 @@ bot.command("stopgame", async (ctx) => {
 bot.catch((err) => console.error("Bot error:", err));
 
 bot.start({
-  onStart: (info) => console.log(\`SayBerg started as @\${info.username}\`),
+  onStart: (info) => console.log(`SayBerg started as @${info.username}`),
 });
