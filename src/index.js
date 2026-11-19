@@ -158,6 +158,7 @@ bot.on("message:text", async (ctx, next) => {
     await ctx.reply(arenaCard(game), { reply_markup: lobbyKeyboard() });
     await ctx.reply("Управление ареной:", { reply_markup: arenaControlsKeyboard() });
     return;
+  }
 
   await promptNext(ctx, draft);
 });
