@@ -11,6 +11,7 @@ if (!token) {
 const bot = new Bot(token);
 const games = new Map();
 const creationDrafts = new Map();
+const registeredGroups = new Map();
 
 const DEFAULT_SETTINGS = { firstElimination: 35, nextElimination: 15 };
 
@@ -32,6 +33,66 @@ function playersText(game) {
 
 function lobbyKeyboard() {
   return new InlineKeyboard().text("➕ Войти", "sayberg:join");
+}
+
+function attendanceKeyboard() {
+  return new InlineKeyboard().text("✅ Я на месте", "sayberg:present");
+}
+
+function groupPickerKeyboard() {
+  const keyboard = new InlineKeyboard();
+  for (const [chatId, group] of registeredGroups) {
+    keyboard.text(group.title, `sayberg:select:${chatId}`).row();
+  }
+  return keyboard;
+}
+
+function escapeHtml(value = "") {
+  return String(value).replace(/[&<>"]/g, (char) => ({
+    "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;",
+  })[char]);
+}
+
+function playerMention(player) {
+  const label = escapeHtml(player.name || "Игрок");
+  return player.username
+    ? `@${escapeHtml(player.username)}`
+    : `<a href="tg://user?id=${player.id}">${label}</a>`;
+}
+
+function creatorMention(game) {
+  return game.creatorUsername
+    ? `@${escapeHtml(game.creatorUsername)}`
+    : `<a href="tg://user?id=${game.creatorId}">${escapeHtml(game.creatorName)}</a>`;
+}
+
+async function finishArenaDraft(api, user, draft) {
+  const chatId = String(draft.targetChatId);
+  const game = {
+    chatId,
+    creatorId: user.id,
+    creatorName: [user.first_name, user.last_name].filter(Boolean).join(" ") || user.username || "Создатель",
+    creatorUsername: user.username || null,
+    status: "lobby",
+    mode: "sprint",
+    round: 0,
+    players: new Map(),
+    settings: { ...DEFAULT_SETTINGS },
+    attendance: draft.attendance,
+    description: draft.description,
+    maxPlayers: draft.maxPlayers,
+    winners: draft.winners,
+    prizes: draft.prizes,
+    createdAt: Date.now(),
+  };
+  game.players.set(user.id, {
+    id: user.id, name: game.creatorName, username: user.username || null, alive: true, present: false,
+  });
+  games.set(chatId, game);
+  creationDrafts.delete(String(user.id));
+  await api.sendMessage(chatId, arenaCard(game), { reply_markup: lobbyKeyboard() });
+  await api.sendMessage(chatId, "Управление ареной:", { reply_markup: arenaControlsKeyboard() });
+  await api.sendMessage(user.id, `✅ Арена создана в группе «${escapeHtml(registeredGroups.get(chatId)?.title || "группа")}».`);
 }
 
 function arenaControlsKeyboard() {
@@ -79,6 +140,7 @@ function arenaCard(game) {
     `🏆 Победителей: ${game.winners}`,
     `🎁 Призы: ${game.prizes}`,
     `👤 Создатель: ${game.creatorName}`,
+    `📣 Перекличка: ${game.attendance ? "включена" : "выключена"}`,
     "",
     `Участников: ${game.players.size}/${game.maxPlayers}`,
     "Нажимайте «Войти», чтобы участвовать.",
@@ -97,8 +159,7 @@ async function publishArena(api, chatId) {
     return;
   }
 
-  await api.sendMessage(chatId, "🚀 Арена начинается! Режим: ⚡ СПРИНТ.");
-  await runSprintRound(api, chatId);
+  await startSprint(api, chatId);
 }
 
 async function promptNext(ctx, draft) {
@@ -112,8 +173,8 @@ async function promptNext(ctx, draft) {
 }
 
 bot.on("message:text", async (ctx, next) => {
-  const chatId = String(ctx.chat.id);
-  const draft = creationDrafts.get(chatId);
+  const draftKey = ctx.chat.type === "private" ? String(ctx.from.id) : String(ctx.chat.id);
+  const draft = creationDrafts.get(draftKey);
   if (!draft || ctx.from.id !== draft.creatorId || ctx.message.text.startsWith("/")) {
     return next();
   }
@@ -145,18 +206,12 @@ bot.on("message:text", async (ctx, next) => {
     draft.step = "prizes";
   } else if (draft.step === "prizes") {
     draft.prizes = value.slice(0, 300);
-    const game = {
-      chatId, creatorId: draft.creatorId, creatorName: draft.creatorName,
-      status: "lobby", mode: "sprint", round: 0, players: new Map(),
-      settings: { ...DEFAULT_SETTINGS }, description: draft.description,
-      maxPlayers: draft.maxPlayers, winners: draft.winners, prizes: draft.prizes,
-      createdAt: Date.now(),
-    };
-    game.players.set(ctx.from.id, { id: ctx.from.id, name: draft.creatorName, alive: true });
-    games.set(chatId, game);
-    creationDrafts.delete(chatId);
-    await ctx.reply(arenaCard(game), { reply_markup: lobbyKeyboard() });
-    await ctx.reply("Управление ареной:", { reply_markup: arenaControlsKeyboard() });
+    draft.step = "attendance";
+    await ctx.reply("📣 Включить перекличку перед первым раундом?\nУчастникам дадут 30 секунд нажать кнопку. Кто не отметится — выбывает.", {
+      reply_markup: new InlineKeyboard()
+        .text("✅ Включить", "sayberg:attendance:on")
+        .text("❌ Выключить", "sayberg:attendance:off"),
+    });
     return;
   }
 
@@ -165,16 +220,25 @@ bot.on("message:text", async (ctx, next) => {
 
 bot.command("start", async (ctx) => {
   await ctx.reply(
-    "⚡ Привет! Я SayBerg — игровой бот для групп.\n\n" +
-    "Добавь меня в группу и напиши /game, чтобы создать арену.\n" +
-    "Первый доступный режим: ⚡ СПРИНТ."
+    "⚡ Привет! Я SayBerg — ведущий групповых игр.\n\n" +
+    "Чтобы создать арену, напиши мне в личку /game.\n" +
+    "Сначала добавь меня в нужную группу и выполни там /register."
   );
+});
+
+bot.command("register", async (ctx) => {
+  if (ctx.chat.type === "private") {
+    return ctx.reply("Эту команду нужно отправить в группе, где будет проходить игра.");
+  }
+  registeredGroups.set(String(ctx.chat.id), { title: ctx.chat.title || "Группа" });
+  await ctx.reply("✅ Группа сохранена. Теперь создатель может открыть личку с SayBerg, написать /game и выбрать эту группу.");
 });
 
 bot.command("help", async (ctx) => {
   await ctx.reply(
     "Команды SayBerg:\n" +
-    "/game — создать арену в этой группе\n" +
+    "/game — создать арену в личке с выбором группы\n" +
+    "/register — добавить эту группу в список для выбора\n" +
     "/join — присоединиться\n" +
     "/startgame — начать игру (создатель)\n" +
     "/status — состояние арены\n" +
@@ -184,37 +248,67 @@ bot.command("help", async (ctx) => {
 });
 
 bot.command("game", async (ctx) => {
-  if (!ctx.chat || ctx.chat.type === "private") {
-    return ctx.reply("Создавать арены можно в группах. Добавь меня в нужную группу.");
+  if (ctx.chat.type !== "private") {
+    return ctx.reply("Создание теперь проходит в личке с SayBerg. Открой бота и напиши /game.");
   }
+  if (creationDrafts.has(String(ctx.from.id))) {
+    return ctx.reply("Ты уже создаёшь арену. Продолжай отвечать на вопросы или напиши /cancel.");
+  }
+  if (!registeredGroups.size) {
+    return ctx.reply("Пока нет доступных групп. Добавь меня в нужную группу и отправь там /register, затем вернись сюда и напиши /game.");
+  }
+  const available = [];
+  for (const [chatId, group] of registeredGroups) {
+    const existing = getGame(chatId);
+    if (!existing || ["finished", "stopped"].includes(existing.status)) available.push([chatId, group]);
+  }
+  if (!available.length) return ctx.reply("Во всех зарегистрированных группах уже идут арены.");
+  const keyboard = new InlineKeyboard();
+  for (const [chatId, group] of available) keyboard.text(group.title, `sayberg:select:${chatId}`).row();
+  await ctx.reply("🎮 Выбери группу, в которой провести арену:", { reply_markup: keyboard });
+});
 
-  const chatId = String(ctx.chat.id);
+bot.callbackQuery(/^sayberg:select:(-?\d+)$/, async (ctx) => {
+  const chatId = ctx.match[1];
+  const group = registeredGroups.get(chatId);
+  if (!group) return ctx.answerCallbackQuery({ text: "Группа не найдена. Зарегистрируй её заново командой /register.", show_alert: true });
   const existing = getGame(chatId);
-  if (existing && existing.status !== "finished" && existing.status !== "stopped") {
-    return ctx.reply("В этой группе уже есть активная арена. Напиши /status.");
+  if (existing && !["finished", "stopped"].includes(existing.status)) {
+    return ctx.answerCallbackQuery({ text: "В этой группе уже идёт арена.", show_alert: true });
   }
-  if (creationDrafts.has(chatId)) {
-    return ctx.reply("Создание арены уже начато. Продолжай отвечать на вопросы или напиши /cancel.");
+  const member = await ctx.api.getChatMember(chatId, ctx.from.id).catch(() => null);
+  if (!member || ["left", "kicked"].includes(member.status)) {
+    return ctx.answerCallbackQuery({ text: "Ты должен состоять в этой группе, чтобы создать там арену.", show_alert: true });
   }
-
-  const creator = ctx.from;
-  const draft = {
-    creatorId: creator.id,
-    creatorName: [creator.first_name, creator.last_name].filter(Boolean).join(" ") || creator.username || "Создатель",
-    step: "description",
-  };
-  creationDrafts.set(chatId, draft);
-  await ctx.reply("⚡ Создание новой арены.\n\nНапиши /cancel, если передумал.");
+  const draft = { creatorId: ctx.from.id, targetChatId: chatId, step: "description" };
+  creationDrafts.set(String(ctx.from.id), draft);
+  await ctx.answerCallbackQuery({ text: "Группа выбрана!" });
+  await ctx.editMessageText(`✅ Выбрана группа: «${escapeHtml(group.title)}»`);
+  await ctx.reply("⚡ Создание арены в личке. Напиши /cancel, если передумал.");
   await promptNext(ctx, draft);
 });
 
+bot.callbackQuery(/^sayberg:attendance:(on|off)$/, async (ctx) => {
+  const draft = creationDrafts.get(String(ctx.from.id));
+  if (!draft || draft.step !== "attendance") {
+    return ctx.answerCallbackQuery({ text: "Этап создания уже завершён.", show_alert: true });
+  }
+  draft.attendance = ctx.match[1] === "on";
+  await ctx.answerCallbackQuery({ text: draft.attendance ? "Перекличка включена" : "Перекличка выключена" });
+  await ctx.editMessageText(draft.attendance
+    ? "📣 Перекличка включена."
+    : "📣 Перекличка выключена.");
+  await finishArenaDraft(ctx.api, ctx.from, draft);
+});
+
 bot.command("cancel", async (ctx) => {
-  const chatId = String(ctx.chat.id);
-  const draft = creationDrafts.get(chatId);
+  const draftKey = ctx.chat.type === "private" ? String(ctx.from.id) : String(ctx.chat.id);
+  const draft = creationDrafts.get(draftKey);
   if (draft && draft.creatorId === ctx.from.id) {
-    creationDrafts.delete(chatId);
+    creationDrafts.delete(draftKey);
     return ctx.reply("Создание арены отменено.");
   }
+  const chatId = String(ctx.chat.id);
   const game = getGame(chatId);
   if (game && game.status === "lobby" && game.creatorId === ctx.from.id) {
     if (game.startTimer) clearTimeout(game.startTimer);
@@ -238,7 +332,7 @@ async function joinGame(ctx) {
     return ctx.answerCallbackQuery({ text: "Мест больше нет." });
   }
   const name = [user.first_name, user.last_name].filter(Boolean).join(" ") || user.username || "Игрок";
-  game.players.set(user.id, { id: user.id, name, alive: true });
+  game.players.set(user.id, { id: user.id, name, username: user.username || null, alive: true, present: false });
   await ctx.answerCallbackQuery({ text: "Ты в арене!" });
   await ctx.editMessageText(arenaCard(game), { reply_markup: lobbyKeyboard() }).catch(() => {});
 }
@@ -274,7 +368,7 @@ bot.command("join", async (ctx) => {
   if (game.players.has(user.id)) return ctx.reply("Ты уже участвуешь.");
   if (game.players.size >= game.maxPlayers) return ctx.reply("Мест больше нет.");
   const name = [user.first_name, user.last_name].filter(Boolean).join(" ") || user.username || "Игрок";
-  game.players.set(user.id, { id: user.id, name, alive: true });
+  game.players.set(user.id, { id: user.id, name, username: user.username || null, alive: true, present: false });
   await ctx.reply(`➕ ${name} присоединился. Игроков: ${game.players.size}/${game.maxPlayers}`);
 });
 
@@ -286,51 +380,81 @@ bot.command("startgame", async (ctx) => {
   await publishArena(ctx.api, chatId);
 });
 
+async function startSprint(api, chatId) {
+  const game = getGame(chatId);
+  if (!game || game.status !== "running") return;
+  await api.sendMessage(chatId,
+    `⚡ СПРИНТ — НАЧАЛО\n\nУчастников (${game.players.size}/${game.maxPlayers})`);
+  if (game.attendance) {
+    game.status = "attendance";
+    await api.sendMessage(chatId, "📣 ПЕРЕКЛИЧКА! У вас есть 30 секунд, чтобы подтвердить участие:", {
+      reply_markup: attendanceKeyboard(),
+    });
+    game.attendanceTimer = setTimeout(() => finishAttendance(api, chatId).catch((err) => console.error("Attendance error:", err)), 30000);
+  } else {
+    setTimeout(() => runSprintRound(api, chatId).catch((err) => console.error("Sprint round error:", err)), 20000);
+  }
+}
+
+bot.callbackQuery("sayberg:present", async (ctx) => {
+  const game = getGame(ctx.chat.id);
+  if (!game || game.status !== "attendance") {
+    return ctx.answerCallbackQuery({ text: "Перекличка уже закончилась." });
+  }
+  const player = game.players.get(ctx.from.id);
+  if (!player || !player.alive) {
+    return ctx.answerCallbackQuery({ text: "Ты не участвуешь в этой арене." });
+  }
+  player.present = true;
+  await ctx.answerCallbackQuery({ text: "Отметка принята!" });
+});
+
+async function finishAttendance(api, chatId) {
+  const game = getGame(chatId);
+  if (!game || game.status !== "attendance") return;
+  game.status = "running";
+  const absent = alivePlayers(game).filter((player) => !player.present);
+  absent.forEach((player) => { player.alive = false; });
+  await api.sendMessage(chatId, absent.length
+    ? `📣 Перекличка завершена.\n❌ Не отметились и выбыли: ${absent.map(playerMention).join(", ")}`
+    : "📣 Перекличка завершена. Все участники на месте!");
+  if (alivePlayers(game).length <= 1) return finishSprint(api, chatId);
+  setTimeout(() => runSprintRound(api, chatId).catch((err) => console.error("Sprint round error:", err)), 20000);
+}
+
+async function finishSprint(api, chatId) {
+  const game = getGame(chatId);
+  if (!game || game.status === "finished" || game.status === "stopped") return;
+  game.status = "finished";
+  const winner = alivePlayers(game)[0];
+  const text = winner
+    ? [
+        `🏆 Победитель — ${playerMention(winner)} !!!`,
+        "",
+        `👤 Создатель арены — ${creatorMention(game)}`,
+        `🎁 Приз — ${escapeHtml(game.prizes)}`,
+        "",
+        "⚠️ Напоминание: SayBerg лишь ведущий игр и не отвечает за выдачу призов.",
+      ].join("\n")
+    : "Игра завершена. Победителя нет.";
+  await api.sendMessage(chatId, text, { parse_mode: "HTML" });
+}
+
 async function runSprintRound(api, chatId) {
   const game = getGame(chatId);
   if (!game || game.status !== "running") return;
-
   const alive = alivePlayers(game);
-  if (alive.length <= 1) {
-    game.status = "finished";
-    const winner = alive[0];
-    await api.sendMessage(chatId, winner
-      ? `🏆 ${winner.name} победил в SayBerg — СПРИНТ!`
-      : "Раунд завершён. Победителей нет.");
-    return;
-  }
-
+  if (alive.length <= 1) return finishSprint(api, chatId);
   game.round += 1;
-  const percent = game.round === 1 ? game.settings.firstElimination : game.settings.nextElimination;
-  const eliminationCount = Math.min(alive.length - 1, Math.max(1, Math.floor(alive.length * percent / 100)));
-  const shuffled = [...alive];
-  for (let i = shuffled.length - 1; i > 0; i--) {
-    const j = Math.floor(Math.random() * (i + 1));
-    [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
-  }
-  const eliminated = shuffled.slice(0, eliminationCount);
-  eliminated.forEach((player) => { player.alive = false; });
-
+  const victim = alive[Math.floor(Math.random() * alive.length)];
+  victim.alive = false;
   await api.sendMessage(chatId, [
-    `⚡ СПРИНТ — раунд ${game.round}`,
-    "",
-    `🎲 Случайный отбор: ${percent}%`,
-    `❌ Выбыли: ${eliminated.map((p) => p.name).join(", ")}`,
-    `🟢 Осталось игроков: ${alivePlayers(game).length}`,
-    "",
-    playersText(game),
-  ].join("\n"));
-
-  if (alivePlayers(game).length <= 1) {
-    const winner = alivePlayers(game)[0];
-    game.status = "finished";
-    await api.sendMessage(chatId, winner
-      ? `🏆 ${winner.name} — победитель SayBerg!`
-      : "Игра завершена.");
-    return;
-  }
-
-  setTimeout(() => runSprintRound(api, chatId).catch((err) => console.error("Sprint round error:", err)), 5000);
+    `⚡ Раунд ${game.round}`,
+    `❌ Убиты: ${playerMention(victim)}`,
+    `🟢 Осталось: ${alivePlayers(game).length}`,
+  ].join("\n"), { parse_mode: "HTML" });
+  if (alivePlayers(game).length <= 1) return finishSprint(api, chatId);
+  setTimeout(() => runSprintRound(api, chatId).catch((err) => console.error("Sprint round error:", err)), 20000);
 }
 
 bot.command("status", async (ctx) => {
