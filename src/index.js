@@ -462,7 +462,8 @@ async function finishAttendance(api, chatId) {
   if (!game || game.status !== "attendance") return;
   game.status = "running";
   const absent = alivePlayers(game).filter((player) => !player.present);
-  absent.forEach((player) => { player.alive = false; });
+  game.placements = game.placements || [];
+  absent.forEach((player) => { player.alive = false; game.placements.push(player.id); });
   await api.sendMessage(chatId, absent.length
     ? `📣 Перекличка завершена.\n❌ Не отметились и выбыли: ${absent.map(playerMention).join(", ")}`
     : "📣 Перекличка завершена. Никто не пропустил перекличку — все на месте!");
@@ -500,9 +501,11 @@ async function runSprintRound(api, chatId) {
   game.round += 1;
   const victim = alive[Math.floor(Math.random() * alive.length)];
   victim.alive = false;
+  game.placements = game.placements || [];
+  game.placements.push(victim.id);
   await api.sendMessage(chatId, [
     `⚡ Раунд ${game.round}`,
-    `❌ Убиты: ${playerMention(victim)}`,
+    `❌ Выбыл: ${playerMention(victim)}`,
     `🟢 Осталось: ${alivePlayers(game).length}`,
   ].join("\n"), { parse_mode: "HTML" });
   if (alivePlayers(game).length <= 1) return finishSprint(api, chatId);
