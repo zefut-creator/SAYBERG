@@ -173,6 +173,19 @@ async function publishArena(api, chatId) {
     return;
   }
 
+  if (game.mode !== "sprint" && game.attendance) {
+    await api.sendMessage(chatId, Modes.MODES[game.mode] + " — НАЧАЛО\n\nПерекличка начнётся через 5 секунд.");
+    game.attendanceStartTimer = setTimeout(async () => {
+      if (game.status !== "running") return;
+      game.status = "attendance";
+      await api.sendMessage(chatId, "📣 ПЕРЕКЛИЧКА! У вас 30 секунд, чтобы подтвердить участие:", {
+        reply_markup: attendanceKeyboard(),
+      });
+      game.attendanceTimer = setTimeout(() => finishAttendance(api, chatId).catch(err => console.error("Attendance error:", err)), 30000);
+    }, 5000);
+    return;
+  }
+
   await Modes.startMode(api, games, chatId, startSprint);
 }
 
@@ -453,6 +466,10 @@ async function finishAttendance(api, chatId) {
   await api.sendMessage(chatId, absent.length
     ? `📣 Перекличка завершена.\n❌ Не отметились и выбыли: ${absent.map(playerMention).join(", ")}`
     : "📣 Перекличка завершена. Никто не пропустил перекличку — все на месте!");
+  if (game.mode !== "sprint") {
+    game.attendance = false;
+    return Modes.startMode(api, games, chatId, startSprint);
+  }
   if (alivePlayers(game).length <= 1) return finishSprint(api, chatId);
   setTimeout(() => runSprintRound(api, chatId).catch((err) => console.error("Sprint round error:", err)), 20000);
 }
@@ -508,6 +525,9 @@ bot.command("endgame", async (ctx) => {
     return ctx.reply("Завершить игру командой /endgame может только её создатель.");
   }
   if (game.startTimer) clearTimeout(game.startTimer);
+  if (game.roundTimer) clearTimeout(game.roundTimer);
+  if (game.attendanceTimer) clearTimeout(game.attendanceTimer);
+  if (game.attendanceStartTimer) clearTimeout(game.attendanceStartTimer);
   game.status = "finished";
   await ctx.reply("🏁 Создатель завершил игру. Игра окончена.");
 });
@@ -524,6 +544,9 @@ bot.command("stopgame", async (ctx) => {
     return ctx.reply("Остановить арену может создатель или администратор группы.");
   }
   if (game.startTimer) clearTimeout(game.startTimer);
+  if (game.roundTimer) clearTimeout(game.roundTimer);
+  if (game.attendanceTimer) clearTimeout(game.attendanceTimer);
+  if (game.attendanceStartTimer) clearTimeout(game.attendanceStartTimer);
   game.status = "stopped";
   await ctx.reply("⏹ Арена остановлена.");
 });
