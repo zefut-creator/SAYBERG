@@ -234,7 +234,14 @@ async function finish(api, games, chatId) {
   if (!game || game.status === "finished" || game.status === "stopped") return;
   game.status = "finished";
   if (game.roundTimer) clearTimeout(game.roundTimer);
-  const rank = Array.from(game.players.values()).sort((a, b) => (game.scores.get(b.id) || 0) - (game.scores.get(a.id) || 0));
+  const survival = ["rooms", "rooms2", "snipers"].includes(game.mode);
+  const rank = Array.from(game.players.values()).sort((a, b) => {
+    if (survival) {
+      const lifeDiff = (game.lives.get(b.id) || 0) - (game.lives.get(a.id) || 0);
+      if (lifeDiff) return lifeDiff;
+    }
+    return (game.scores.get(b.id) || 0) - (game.scores.get(a.id) || 0);
+  });
   const places = Math.max(1, Math.min(Number(game.winners) || 1, rank.length));
   const winners = rank.slice(0, places);
   await api.sendMessage(chatId,
