@@ -321,7 +321,7 @@ bot.callbackQuery(/^sayberg:select:(-?\d+)$/, async (ctx) => {
   await ctx.reply("🎮 Выбери режим игры:", { reply_markup: Modes.modeKeyboard() });
 });
 
-bot.callbackQuery(/^sayberg:mode:(sprint|rooms|rooms2|click|snipers|wanted|random|dice|smart)$/, async (ctx) => {
+bot.callbackQuery(/^sayberg:mode:(arena|sprint|rooms|rooms2|click|snipers|wanted|random|dice|smart)$/, async (ctx) => {
   const draft = creationDrafts.get(String(ctx.from.id));
   if (!draft || draft.step !== "mode") return ctx.answerCallbackQuery({ text: "Этап выбора режима уже завершён.", show_alert: true });
   draft.mode = ctx.match[1];
