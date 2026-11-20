@@ -88,7 +88,10 @@ function prepareChallenge(game) {
     if (game.task === "math") game.question = makeMathQuestion();
     if (game.task === "coin") game.coin = Math.floor(Math.random() * 2);
   } else if (game.mode === "smart") {
-    game.question = makeMathQuestion();
+    const custom = Array.isArray(game.quizQuestions) && game.quizQuestions.length
+      ? game.quizQuestions[(game.round - 1) % game.quizQuestions.length]
+      : null;
+    game.question = custom || makeMathQuestion();
   } else if (game.mode === "dice") {
     game.roll = 1 + Math.floor(Math.random() * 6);
   }
