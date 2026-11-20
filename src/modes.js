@@ -138,6 +138,11 @@ async function resolveRound(api, games, chatId) {
   const lines = [];
   const addScore = (p, n) => game.scores.set(p.id, (game.scores.get(p.id) || 0) + n);
   const loseLife = p => {
+    if (game.shields.has(p.id)) {
+      game.shields.delete(p.id);
+      lines.push("🛡 " + p.name + " спасён защитным щитом!");
+      return;
+    }
     const left = Math.max(0, (game.lives.get(p.id) || 1) - 1);
     game.lives.set(p.id, left);
     p.alive = left > 0;
@@ -154,7 +159,7 @@ async function resolveRound(api, games, chatId) {
       if (choice === 0) { game.shields.add(p.id); lines.push("🛡 " + p.name + " получил щит."); }
       else if (choice === 1) { if (Math.random() < 0.5) addScore(p, 3); else loseLife(p); }
       else if (choice === 2) addScore(p, 1 + Math.floor(Math.random() * 3));
-      else { addScore(p, 1); if (game.shields.has(p.id)) game.shields.delete(p.id); }
+      else { if (Math.random() < 0.5) addScore(p, 2); else addScore(p, -1); }
     });
     lines.push("⚔️ Арена событий завершила раунд.");
   } else if (game.mode === "snipers" || game.mode === "rooms" || game.mode === "rooms2") {
