@@ -1,6 +1,7 @@
 const { InlineKeyboard } = require("grammy");
 
 const MODES = Object.freeze({
+  arena: "⚔️ АРЕНА",
   sprint: "⚡ СПРИНТ",
   rooms: "🚪 КОМНАТЫ",
   rooms2: "🚪 КОМНАТЫ Х2",
@@ -26,6 +27,7 @@ function actionKeyboard(game) {
   const k = new InlineKeyboard();
   let labels;
   if (game.mode === "wanted") labels = Array.from({ length: WINDOW_COUNT }, (_, i) => "🪟 Окно " + (i + 1));
+  else if (game.mode === "arena") labels = ["🛡 Защита", "⚡ Риск", "🍀 Удача", "🔄 Перемена"];
   else if (["rooms", "rooms2", "snipers"].includes(game.mode)) {
     labels = Array.from({ length: ROOM_COUNT }, (_, i) => "🚪 Комната " + (i + 1));
     if (game.mode === "rooms2") labels.push("🎲 ALL IN");
@@ -39,6 +41,7 @@ function actionKeyboard(game) {
 }
 function rules(game) {
   const texts = {
+    arena: "Универсальная арена испытаний: выбирай одно из четырёх событий. У игроков есть жизни, иногда появляются защитные щиты и раунды возрождения.",
     sprint: "Перекличка длится 30 секунд. Затем каждые 20 секунд случайно выбывает один игрок. Побеждает последний.",
     rooms: "Каждый выбирает одну из четырёх комнат. Одна комната становится опасной; все выбравшие её теряют жизнь.",
     rooms2: "У каждого две жизни. В каждом третьем раунде опасны две комнаты. ALL IN: безопасный выбор даёт бонус, опасный отнимает обе жизни.",
@@ -64,7 +67,7 @@ function makeMathQuestion() {
 function prepareChallenge(game) {
   if (game.mode === "wanted") {
     game.target = Math.floor(Math.random() * WINDOW_COUNT);
-    const parity = game.target % 2 === 0 ? "чётном" : "нечётном";
+    const parity = game.target % 2 === 0 ? "нечётном" : "чётном";
     game.clue = "Цель находится в " + parity + " окне.";
   } else if (game.mode === "snipers") {
     game.target = Math.floor(Math.random() * ROOM_COUNT);
@@ -77,6 +80,8 @@ function prepareChallenge(game) {
       while (second === first) second = Math.floor(Math.random() * ROOM_COUNT);
       game.hazards.add(second);
     }
+  } else if (game.mode === "arena") {
+    game.event = Math.floor(Math.random() * 4);
   } else if (game.mode === "random") {
     const tasks = ["math", "coin", "reaction"];
     game.task = tasks[Math.floor(Math.random() * tasks.length)];
@@ -96,6 +101,10 @@ async function startMode(api, games, chatId, sprint) {
   game.scores = new Map(Array.from(game.players.keys(), id => [id, 0]));
   game.lives = new Map(Array.from(game.players.values(), p => [p.id, p.alive === false ? 0 : (["rooms2", "snipers"].includes(game.mode) ? 2 : 1)]));
   game.picks = new Map();
+  game.shields = new Set();
+  const shieldPlayers = Array.from(game.players.values()).filter(p => p.alive !== false).sort(() => Math.random() - 0.5);
+  shieldPlayers.slice(0, Math.max(1, Math.floor(shieldPlayers.length / 4))).forEach(p => game.shields.add(p.id));
+  game.revived = false;
   game.status = "mode-round";
   await api.sendMessage(chatId, MODES[game.mode] + " — НАЧАЛО\n\n" + rules(game) + "\n\nУчастников: " + game.players.size);
   await nextRound(api, games, chatId);
@@ -111,10 +120,11 @@ async function nextRound(api, games, chatId) {
   prepareChallenge(game);
   let intro = "Сделай выбор за 15 секунд!";
   if (game.mode === "wanted") intro = "🔍 " + game.clue;
-  if (game.mode === "snipers") intro = "🕵️ Игроки выбрали укрытия. " + game.clue;
+  if (game.mode === "snipers") intro = "🕵️ Выбери комнату, чтобы спрятаться. Проверка раскроется после таймера.";
   if (game.mode === "random") intro = game.task === "math" ? "🧩 " + game.question.question : game.task === "coin" ? "🪙 Угадай цвет монеты!" : "⚡ Кто быстрее нажмёт кнопку?";
   if (game.mode === "smart") intro = "🧠 " + game.question.question;
   if (game.mode === "dice") intro = "🎲 Какое число выпадет: больше 3 или меньше 4?";
+  if (game.mode === "arena") intro = "⚔️ Выбери событие раунда!";
   await api.sendMessage(chatId, "🎮 Раунд " + game.round + "\n" + intro, { reply_markup: actionKeyboard(game) });
   game.roundTimer = setTimeout(() => resolveRound(api, games, chatId).catch(console.error), 15000);
 }
@@ -134,6 +144,16 @@ async function resolveRound(api, games, chatId) {
   if (game.mode === "wanted") {
     active.forEach(p => { if (game.picks.get(p.id) === game.target) addScore(p, 3); });
     lines.push("🎯 Цель была в окне " + (game.target + 1) + ". Верный ответ: +3 очка.");
+  } else if (game.mode === "arena") {
+    active.forEach(p => {
+      const choice = game.picks.get(p.id);
+      if (choice === undefined) return;
+      if (choice === 0) { game.shields.add(p.id); lines.push("🛡 " + p.name + " получил щит."); }
+      else if (choice === 1) { if (Math.random() < 0.5) addScore(p, 3); else loseLife(p); }
+      else if (choice === 2) addScore(p, 1 + Math.floor(Math.random() * 3));
+      else { addScore(p, 1); if (game.shields.has(p.id)) game.shields.delete(p.id); }
+    });
+    lines.push("⚔️ Арена событий завершила раунд.");
   } else if (game.mode === "snipers" || game.mode === "rooms" || game.mode === "rooms2") {
     const hazards = game.mode === "snipers" ? new Set([game.target]) : game.hazards;
     lines.push(game.mode === "snipers" ? "🔎 Проверена комната " + (game.target + 1) + "." : "⚠️ Опасные комнаты: " + Array.from(hazards, n => n + 1).join(", ") + ".");
@@ -190,6 +210,16 @@ async function resolveRound(api, games, chatId) {
   if (["wanted", "dice", "smart", "random"].includes(game.mode)) {
     if (game.round >= (game.mode === "wanted" ? 10 : 15)) return finish(api, games, chatId);
   } else if (activePlayers(game).length <= 1) return finish(api, games, chatId);
+  if (game.mode === "arena" && game.round % 5 === 0 && !game.revived) {
+    const out = Array.from(game.players.values()).filter(p => (game.lives.get(p.id) || 0) <= 0);
+    if (out.length) {
+      const revived = out.sort((a, b) => (game.scores.get(b.id) || 0) - (game.scores.get(a.id) || 0))[0];
+      game.lives.set(revived.id, 1);
+      revived.alive = true;
+      game.revived = true;
+      await api.sendMessage(chatId, "✨ Раунд возрождения! " + revived.name + " возвращается с 1 жизнью.");
+    }
+  }
   game.roundTimer = setTimeout(() => nextRound(api, games, chatId).catch(console.error), 5000);
 }
 async function finish(api, games, chatId) {
