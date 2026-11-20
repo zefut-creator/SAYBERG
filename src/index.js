@@ -276,6 +276,7 @@ bot.command("help", async (ctx) => {
     "/status — состояние арены\n" +
     "/stopgame — остановить арену\n" +
     "/cancel — отменить создание арены\n" +
+    "/addquestion — добавить вопрос для режима Умник\n" +
     "Доступные режимы: СПРИНТ, КОМНАТЫ, КОМНАТЫ Х2, КЛИК-КЛАК, ПОИСКОВИКИ, РОЗЫСК, ОХУЕБЕРГ, ТУРНИР КУБИКОВ, УМНИК"
   );
 });
@@ -416,6 +417,30 @@ bot.command("join", async (ctx) => {
   game.players.set(user.id, { id: user.id, name, username: user.username || null, alive: true, present: false });
   await updateArenaCard(ctx.api, game);
   await ctx.reply(`➕ ${name} присоединился. Игроков: ${game.players.size}/${game.maxPlayers}`);
+});
+
+bot.command("addquestion", async (ctx) => {
+  const game = getGame(ctx.chat.id);
+  if (!game || game.status !== "lobby") return ctx.reply("Добавлять вопросы можно до запуска арены.");
+  if (ctx.from.id !== game.creatorId) return ctx.reply("Добавлять вопросы может только создатель.");
+  if (game.mode !== "smart") return ctx.reply("Эта команда доступна в режиме 🧠 УМНИК.");
+  const raw = ctx.message.text.replace(/^\/addquestion(?:@\w+)?\s*/i, "");
+  const parts = raw.split("|").map(x => x.trim());
+  if (parts.length !== 4 || parts.some(x => !x)) {
+    return ctx.reply("Формат:\n/addquestion Вопрос | правильный ответ | вариант 2 | вариант 3");
+  }
+  const answers = parts.slice(1);
+  const correctText = answers[0];
+  const shuffled = answers.map((answer, i) => ({ answer, correct: i === 0 })).sort(() => Math.random() - 0.5);
+  game.quizQuestions = game.quizQuestions || [];
+  if (game.quizQuestions.length >= 30) return ctx.reply("Максимум 30 вопросов на одну арену.");
+  game.quizQuestions.push({
+    question: parts[0],
+    answers: shuffled.map(x => x.answer),
+    correct: shuffled.findIndex(x => x.correct),
+    correctText,
+  });
+  await ctx.reply("✅ Вопрос добавлен. Всего вопросов: " + game.quizQuestions.length);
 });
 
 bot.command("startgame", async (ctx) => {
