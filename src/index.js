@@ -303,8 +303,20 @@ bot.callbackQuery(/^sayberg:select:(-?\d+)$/, async (ctx) => {
   await ctx.answerCallbackQuery({ text: "Группа выбрана!" });
   await ctx.editMessageText(`✅ Выбрана группа: «${escapeHtml(group.title)}»`);
   await ctx.reply("⚡ Создание арены в личке. Напиши /cancel, если передумал.");
+  await ctx.reply("🎮 Выбери режим игры:", { reply_markup: Modes.modeKeyboard() });
+});
+
+bot.callbackQuery(/^sayberg:mode:(sprint|rooms|rooms2|click|snipers|wanted|random|dice|smart)$/, async (ctx) => {
+  const draft = creationDrafts.get(String(ctx.from.id));
+  if (!draft || draft.step !== "mode") return ctx.answerCallbackQuery({ text: "Этап выбора режима уже завершён.", show_alert: true });
+  draft.mode = ctx.match[1];
+  draft.step = "description";
+  await ctx.answerCallbackQuery({ text: Modes.MODES[draft.mode] + " выбран" });
+  await ctx.editMessageText("🎮 Выбран режим: " + Modes.MODES[draft.mode]);
   await promptNext(ctx, draft);
 });
+
+bot.callbackQuery(/^sayberg:pick:(\d+)$/, async (ctx) => Modes.pick(ctx, games));
 
 bot.callbackQuery(/^sayberg:attendance:(on|off)$/, async (ctx) => {
   const draft = creationDrafts.get(String(ctx.from.id));
