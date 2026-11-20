@@ -1,6 +1,7 @@
 require("dotenv").config();
 
 const { Bot, InlineKeyboard } = require("grammy");
+const Modes = require("./modes");
 
 const token = process.env.BOT_TOKEN;
 if (!token) {
@@ -74,7 +75,7 @@ async function finishArenaDraft(api, user, draft) {
     creatorName: [user.first_name, user.last_name].filter(Boolean).join(" ") || user.username || "Создатель",
     creatorUsername: user.username || null,
     status: "lobby",
-    mode: "sprint",
+    mode: draft.mode || "sprint",
     round: 0,
     players: new Map(),
     settings: { ...DEFAULT_SETTINGS },
@@ -171,7 +172,7 @@ async function publishArena(api, chatId) {
     return;
   }
 
-  await startSprint(api, chatId);
+  await Modes.startMode(api, games, chatId, startSprint);
 }
 
 async function promptNext(ctx, draft) {
@@ -297,7 +298,7 @@ bot.callbackQuery(/^sayberg:select:(-?\d+)$/, async (ctx) => {
   if (member && ["left", "kicked"].includes(member.status)) {
     return ctx.answerCallbackQuery({ text: "Ты должен состоять в этой группе, чтобы создать там арену.", show_alert: true });
   }
-  const draft = { creatorId: ctx.from.id, targetChatId: chatId, step: "description" };
+  const draft = { creatorId: ctx.from.id, targetChatId: chatId, step: "mode" };
   creationDrafts.set(String(ctx.from.id), draft);
   await ctx.answerCallbackQuery({ text: "Группа выбрана!" });
   await ctx.editMessageText(`✅ Выбрана группа: «${escapeHtml(group.title)}»`);
@@ -358,7 +359,7 @@ bot.callbackQuery("sayberg:join", joinGame);
 
 bot.callbackQuery("sayberg:rules", async (ctx) => {
   await ctx.answerCallbackQuery();
-  await ctx.reply(sprintRules());
+  const g = getGame(ctx.chat.id); await ctx.reply(g ? Modes.rules(g) : sprintRules());
 });
 
 bot.callbackQuery("sayberg:start", async (ctx) => {
