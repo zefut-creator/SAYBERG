@@ -106,7 +106,10 @@ async function startMode(api, games, chatId, sprint) {
   shieldPlayers.slice(0, Math.max(1, Math.floor(shieldPlayers.length / 4))).forEach(p => game.shields.add(p.id));
   game.revived = false;
   game.status = "mode-round";
-  await api.sendMessage(chatId, MODES[game.mode] + " — НАЧАЛО\n\n" + rules(game) + "\n\nУчастников: " + game.players.size);
+  const shieldNames = Array.from(game.players.values()).filter(p => game.shields.has(p.id)).map(p => p.name);
+  await api.sendMessage(chatId, MODES[game.mode] + " — НАЧАЛО\n\n" + rules(game) +
+    "\n\nУчастников: " + game.players.size +
+    (shieldNames.length ? "\n🛡 Щит на старте: " + shieldNames.join(", ") : ""));
   await nextRound(api, games, chatId);
 }
 async function nextRound(api, games, chatId) {
@@ -159,7 +162,7 @@ async function resolveRound(api, games, chatId) {
     lines.push(game.mode === "snipers" ? "🔎 Проверена комната " + (game.target + 1) + "." : "⚠️ Опасные комнаты: " + Array.from(hazards, n => n + 1).join(", ") + ".");
     active.forEach(p => {
       const choice = game.picks.get(p.id);
-      if (choice === undefined) { lines.push("⌛ " + p.name + " не выбрал комнату."); return; }
+      if (choice === undefined) { lines.push("⌛ " + p.name + " не выбрал комнату."); loseLife(p); return; }
       if (game.mode === "rooms2" && choice === 4) {
         const allInRoom = Math.floor(Math.random() * ROOM_COUNT);
         if (hazards.has(allInRoom)) {
@@ -170,8 +173,12 @@ async function resolveRound(api, games, chatId) {
           addScore(p, 2);
           lines.push("🍀 " + p.name + " прошёл ALL IN и получил +2 очка.");
         }
-      } else if (hazards.has(choice)) loseLife(p);
-      else addScore(p, 1);
+      } else if (hazards.has(choice)) {
+        if (game.shields.has(p.id)) {
+          game.shields.delete(p.id);
+          lines.push("🛡 " + p.name + " спасён защитным щитом!");
+        } else loseLife(p);
+      } else addScore(p, 1);
     });
   } else if (game.mode === "click") {
     const submitted = active.filter(p => game.picks.has(p.id)).sort((a, b) => game.picks.get(a.id) - game.picks.get(b.id));
