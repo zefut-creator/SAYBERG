@@ -479,17 +479,27 @@ async function finishSprint(api, chatId) {
   const game = getGame(chatId);
   if (!game || game.status === "finished" || game.status === "stopped") return;
   game.status = "finished";
-  const winner = alivePlayers(game)[0];
-  const text = winner
+  if (game.roundTimer) clearTimeout(game.roundTimer);
+  const survivors = alivePlayers(game);
+  const eliminated = (game.placements || []).slice().reverse().map(id => game.players.get(id)).filter(Boolean);
+  const ranking = [...survivors, ...eliminated];
+  const winnerCount = Math.max(1, Math.min(Number(game.winners) || 1, ranking.length));
+  const podium = ranking.slice(0, winnerCount);
+  const text = ranking.length
     ? [
-        `🏆 Победитель — ${playerMention(winner)} !!!`,
+        "🏆 РЕЗУЛЬТАТЫ СПРИНТА",
         "",
-        `👤 Создатель арены — ${creatorMention(game)}`,
-        `🎁 Приз — ${escapeHtml(game.prizes)}`,
+        ...ranking.map((player, i) => (i + 1) + ". " + playerMention(player)),
         "",
-        "⚠️ Напоминание: SayBerg лишь ведущий игр и не отвечает за выдачу призов.",
+        "🥇 Победители:",
+        ...podium.map((player, i) => (i + 1) + ". " + playerMention(player)),
+        "",
+        "👤 Создатель арены — " + creatorMention(game),
+        "🎁 Призы — " + escapeHtml(game.prizes),
+        "",
+        "⚠️ SayBerg — ведущий игр; выдачу призов обеспечивает создатель.",
       ].join("\n")
-    : "Игра завершена. Победителя нет.";
+    : "Игра завершена. Участников не осталось.";
   await api.sendMessage(chatId, text, { parse_mode: "HTML" });
 }
 
