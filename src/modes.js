@@ -94,7 +94,7 @@ async function startMode(api, games, chatId, sprint) {
   if (game.mode === "sprint") return sprint(api, chatId);
   game.round = 0;
   game.scores = new Map(Array.from(game.players.keys(), id => [id, 0]));
-  game.lives = new Map(Array.from(game.players.keys(), id => [id, ["rooms2", "snipers"].includes(game.mode) ? 2 : 1]));
+  game.lives = new Map(Array.from(game.players.values(), p => [p.id, p.alive === false ? 0 : (["rooms2", "snipers"].includes(game.mode) ? 2 : 1)]));
   game.picks = new Map();
   game.status = "mode-round";
   await api.sendMessage(chatId, MODES[game.mode] + " — НАЧАЛО\n\n" + rules(game) + "\n\nУчастников: " + game.players.size);
@@ -127,6 +127,7 @@ async function resolveRound(api, games, chatId) {
   const loseLife = p => {
     const left = Math.max(0, (game.lives.get(p.id) || 1) - 1);
     game.lives.set(p.id, left);
+    p.alive = left > 0;
     lines.push("❌ " + p.name + (left ? " потерял жизнь. Осталась 1." : " выбыл."));
   };
 
@@ -140,8 +141,10 @@ async function resolveRound(api, games, chatId) {
       const choice = game.picks.get(p.id);
       if (choice === undefined) { lines.push("⌛ " + p.name + " не выбрал комнату."); return; }
       if (game.mode === "rooms2" && choice === 4) {
-        if (hazards.has(game.picks.get(p.id))) {
+        const allInRoom = Math.floor(Math.random() * ROOM_COUNT);
+        if (hazards.has(allInRoom)) {
           game.lives.set(p.id, 0);
+          p.alive = false;
           lines.push("🎲 " + p.name + " рискнул ALL IN и выбыл.");
         } else {
           addScore(p, 2);
