@@ -115,7 +115,7 @@ function sprintRules() {
 
 function gameSummary(game) {
   return [
-    "⚡ SAYBERG — СПРИНТ",
+    `🎮 SAYBERG — ${Modes.MODES[game.mode] || Modes.MODES.sprint}`,
     "",
     `Раунд: ${game.round}`,
     `Игроков в игре: ${alivePlayers(game).length}/${game.players.size}`,
@@ -141,6 +141,7 @@ async function updateArenaCard(api, game) {
 function arenaCard(game) {
   return [
     "⚡ SAYBERG — НОВАЯ АРЕНА",
+    `🎮 Режим: ${Modes.MODES[game.mode] || Modes.MODES.sprint}`,
     "",
     `📝 Описание: ${game.description}`,
     `👥 Максимум игроков: ${game.maxPlayers}`,
@@ -261,7 +262,8 @@ bot.command("help", async (ctx) => {
     "/startgame — начать игру (создатель)\n" +
     "/status — состояние арены\n" +
     "/stopgame — остановить арену\n" +
-    "/cancel — отменить создание арены"
+    "/cancel — отменить создание арены\n" +
+    "Доступные режимы: СПРИНТ, КОМНАТЫ, КОМНАТЫ Х2, КЛИК-КЛАК, ПОИСКОВИКИ, РОЗЫСК, ОХУЕБЕРГ, ТУРНИР КУБИКОВ, УМНИК"
   );
 });
 
