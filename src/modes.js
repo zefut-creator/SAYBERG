@@ -32,7 +32,7 @@ function actionKeyboard(game) {
     labels = Array.from({ length: ROOM_COUNT }, (_, i) => "🚪 Комната " + (i + 1));
     if (game.mode === "rooms2") labels.push("🎲 ALL IN");
   } else if (game.mode === "dice") labels = ["⬆️ Больше 3", "⬇️ Меньше 4"];
-  else if (game.mode === "smart") labels = ["🅰️", "🅱️", "©️"];
+  else if (game.mode === "smart") labels = (game.question?.answers || ["А", "Б", "В"]).map((answer, i) => ["🅰️ ", "🅱️ ", "©️ "][i] + String(answer).slice(0, 35));
   else if (game.mode === "random" && game.task === "math") labels = ["1️⃣ " + game.answers[0], "2️⃣ " + game.answers[1], "3️⃣ " + game.answers[2]];
   else if (game.mode === "random" && game.task === "coin") labels = ["🔴 Красное", "⚫ Чёрное"];
   else labels = ["⚡ ЖМИ!"];
